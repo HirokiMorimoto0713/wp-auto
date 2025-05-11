@@ -1,7 +1,6 @@
 import os
 import requests
 from dotenv import load_dotenv
-# 新：HTML付き記事生成関数をインポート
 from generate_article import (
     generate_article_html,
     generate_image_prompt,
@@ -9,35 +8,37 @@ from generate_article import (
 )
 from io import BytesIO
 
-# .env から読み込む
+# .env から WP の情報を読み込む
 load_dotenv()
 WP_URL      = os.getenv("WP_URL").rstrip("/")
 WP_USER     = os.getenv("WP_USER")
 WP_APP_PASS = os.getenv("WP_APP_PASS")
 
-# 画像アップロード
 def upload_image_to_wp(image_url: str) -> int:
-    img_data = requests.get(image_url).content
+    """
+    画像URLをダウンロードし、WPメディアにアップロードしてIDを返す
+    """
+    img = requests.get(image_url).content
     filename = "featured.jpg"
-    headers = {
-        "Content-Disposition": f'attachment; filename="{filename}"'
-    }
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     resp = requests.post(
         f"{WP_URL}/wp-json/wp/v2/media",
         auth=(WP_USER, WP_APP_PASS),
         headers=headers,
-        files={"file": (filename, BytesIO(img_data), "image/jpeg")}
+        files={"file": (filename, BytesIO(img), "image/jpeg")}
     )
     resp.raise_for_status()
     return resp.json()["id"]
 
-# 記事投稿（画像IDを受け取る）
-def post_to_wp(title: str, content: str, image_id: int) -> dict:
+def post_to_wp(title: str, html_content: str, image_id: int) -> dict:
+    """
+    タイトル／HTML本文／アイキャッチ画像IDを使ってWPに投稿
+    """
     data = {
-        "title": title,
-        "content": content,
-        "status": "draft",           # 下書き → 確認後に "publish" へ
-        "featured_media": image_id   # ここでアイキャッチ設定
+        "title":          title,
+        "content":        html_content,
+        "status":         "publish",       # draftなら"draft"
+        "featured_media": image_id
     }
     resp = requests.post(
         f"{WP_URL}/wp-json/wp/v2/posts",
@@ -48,21 +49,20 @@ def post_to_wp(title: str, content: str, image_id: int) -> dict:
     return resp.json()
 
 if __name__ == "__main__":
-    prompt = "春におすすめの東京のカフェを5つ紹介する記事を書いてください"
+    # 投稿したいテーマをここで記述
+    prompt = "夏に東京近郊で楽しめる日帰り温泉スポットを5つ紹介する記事を書いてください"
 
-    # 1. HTML付き本文生成
+    # 1) タイトル＆HTML生成
     article = generate_article_html(prompt)
 
-    # 2. 画像生成プロンプト作成
-    image_prompt = generate_image_prompt(article["content"])
+    # 2) 画像プロンプト＆URL取得
+    img_prompt = generate_image_prompt(article["content"])
+    img_url    = generate_image_url(img_prompt)
 
-    # 3. 画像URL取得
-    image_url = generate_image_url(image_prompt)
+    # 3) WP に画像アップロード→ID取得
+    img_id = upload_image_to_wp(img_url)
 
-    # 4. WPに画像アップロード → ID取得
-    image_id = upload_image_to_wp(image_url)
-
-    # 5. WPに記事投稿（画像IDを渡す）
-    res = post_to_wp(article["title"], article["content"], image_id)
-    print("✅ 投稿完了！記事URL:", res.get("link"))
+    # 4) 記事投稿（自動生成タイトルをそのまま使う）
+    res = post_to_wp(article["title"], article["content"], img_id)
+    print("✅ 完了！記事URL:", res.get("link"))
 
