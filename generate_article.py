@@ -125,7 +125,7 @@ def generate_image_url(image_prompt: str) -> str:
     response = openai.images.generate(
         model="dall-e-3",
         prompt=image_prompt,
-        size="1024x1024",
+        size="1792x1024",
         n=1
     )
     return response.data[0].url
