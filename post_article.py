@@ -1,81 +1,90 @@
-import os
-import requests
-import random
+# 1. モジュールと関数読み込み
+import os, requests, random, re, json
 from dotenv import load_dotenv
 from io import BytesIO
+from bs4 import BeautifulSoup
 from generate_article import (
+    generate_article_html,          # ← ★ 関数名を合わせる
     generate_title_variants,
-    generate_article_html,
     generate_image_prompt,
     generate_image_url
 )
 
-# .env から WP の情報を読み込む
+# 2. 環境変数
 load_dotenv()
-WP_URL      = os.getenv("WP_URL").rstrip("/")    # 例: https://your-site.com
-WP_USER     = os.getenv("WP_USER")               # WPログインユーザー名
-WP_APP_PASS = os.getenv("WP_APP_PASS")           # アプリケーションパスワード
+WP_URL      = os.getenv("WP_URL").rstrip("/")
+WP_USER     = os.getenv("WP_USER")
+WP_APP_PASS = os.getenv("WP_APP_PASS")
 
-def upload_image_to_wp(image_url: str) -> int:
-    """
-    画像URLをダウンロードし、WPメディアにアップロードしてIDを返す
-    """
+# 3. 画像アップロード関数（URLも返す）
+def upload_image_to_wp(image_url: str) -> tuple[int, str]:
     img_data = requests.get(image_url).content
-    filename = "featured.jpg"
-    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    filename = os.path.basename(image_url.split("?")[0]) or "img.jpg"
     resp = requests.post(
         f"{WP_URL}/wp-json/wp/v2/media",
         auth=(WP_USER, WP_APP_PASS),
-        headers=headers,
-        files={"file": (filename, BytesIO(img_data), "image/jpeg")}
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        files={"file": (filename, img_data, "image/jpeg")}
     )
     resp.raise_for_status()
-    return resp.json()["id"]
+    j = resp.json()
+    return j["id"], j["source_url"]
 
-def post_to_wp(title: str, html_content: str, image_id: int) -> dict:
-    """
-    タイトル／HTML本文／アイキャッチ画像IDを使ってWPに投稿
-    """
+# 4. h2直下に画像を挿入
+def insert_images_to_html(html: str, max_imgs: int = 6) -> tuple[str, list[int]]:
+    soup = BeautifulSoup(html, "html.parser")
+    media_ids = []
+
+    for h2_tag, _ in zip(soup.find_all("h2"), range(max_imgs)):
+        heading_text = h2_tag.get_text()
+
+        # 1) 見出しから画像プロンプト
+        img_prompt = generate_image_prompt(
+            f"Illustration or photograph representing: {heading_text}"
+        )
+
+        # 2) 画像URL生成
+        img_url = generate_image_url(img_prompt)
+
+        # 3) WPにアップロード
+        m_id, wp_src = upload_image_to_wp(img_url)
+        media_ids.append(m_id)
+
+        # 4) <img> を h2 直後に挿入
+        img_tag = soup.new_tag("img", src=wp_src, loading="lazy")
+        h2_tag.insert_after(img_tag)
+
+    return str(soup), media_ids
+
+# 5. 投稿関数
+def post_to_wp(title: str, content: str, featured_id: int | None) -> dict:
     data = {
-        "title":          title,
-        "content":        html_content,
-        "status":         "publish",       # draftなら"draft"
-        "featured_media": image_id
+        "title": title,
+        "content": content,
+        "status": "draft",
+        "featured_media": featured_id or 0
     }
-    resp = requests.post(
+    r = requests.post(
         f"{WP_URL}/wp-json/wp/v2/posts",
         auth=(WP_USER, WP_APP_PASS),
         json=data
     )
-    resp.raise_for_status()
-    return resp.json()
+    r.raise_for_status()
+    return r.json()
 
+# 6. 実行(main)
 if __name__ == "__main__":
-    prompt = "今からAIを使い始める人に向けて、生成AIとは何か、何が便利なのか、無料で使えるのか、をわかりやすく解説してください"
+    prompt = "AI初心者に生成AIを紹介する記事を書いてください"
 
-    # 1) タイトル案生成＆ログ出力
-    variants = generate_title_variants(prompt, n=8)
-    print("🔍 タイトル候補一覧:")
-    for idx, t in enumerate(variants, start=1):
-        print(f"  {idx}. {t}")
-    print("───────────────────────────\n")
-
-    # 2) ランダムに1つ選択
-    chosen_title = random.choice(variants)
-    print(f"🔖 選ばれたタイトル: {chosen_title}")
-
-    # 3) 本文（HTML）を生成
+    # (a) 記事本文＋タイトル生成
     article = generate_article_html(prompt)
-    article["title"] = chosen_title
 
-    # 4) 画像プロンプト＆URL取得
-    img_prompt = generate_image_prompt(article["content"])
-    img_url    = generate_image_url(img_prompt)
+    # (b) 本文に画像6枚を埋め込み
+    updated_html, media_ids = insert_images_to_html(article["content"], max_imgs=6)
+    article["content"] = updated_html
+    featured_id = media_ids[0] if media_ids else None
 
-    # 5) 画像アップロード→ID取得
-    img_id = upload_image_to_wp(img_url)
-
-    # 6) 記事投稿
-    res = post_to_wp(article["title"], article["content"], img_id)
-    print("✅ 投稿完了！記事URL:", res.get("link"))
+    # (c) 投稿
+    res = post_to_wp(article["title"], article["content"], featured_id)
+    print("✅ 投稿完了！URL:", res["link"])
 
