@@ -11,24 +11,37 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def generate_title_variants(prompt: str, n: int = 5) -> list[str]:
     """
-    テーマ(prompt)に合う日本語タイトル案をn個返す
+    テーマ(prompt)に合う“イケてる”日本語タイトルをn個生成
     """
+    style_examples = [
+        "もう迷わない。初心者でもできる〇〇の始め方",
+        "これを知らずに〇〇始めるのは損してる",
+        "正直しんどい。でも〇〇で人生変わった話",
+        "2年間の失敗を経て、やっと見つけた〇〇",
+        "厳選7選｜2024年最新のおすすめ〇〇を紹介"
+    ]
+
+    examples_text = "\n".join([f"- {ex}" for ex in style_examples])
+
+    system_prompt = (
+        "あなたはSEOと読者心理に長けたブログ編集者です。\n"
+        "以下のタイトル例の文体・構成・語感・テンションを参考に、\n"
+        "与えられたテーマに対する魅力的な日本語タイトルを複数生成してください。\n"
+        "タイトル例:\n" + examples_text + "\n"
+        "出力はJSON形式で → {\"titles\": [\"…\", \"…\", …]}"
+    )
+
     resp = openai.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {
-                "role": "system",
-                "content": f"この記事のタイトルを日本語で創造的に{n}案、箇条書きで出してください。'titles' 配列で JSON だけ返してください"
-            },
-            {"role": "user", "content": prompt}
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": prompt}
         ],
-        temperature=0.9,
-        max_tokens=300,
-        response_format={"type":"json_object"}   
-
+        temperature=0.95,
+        max_tokens=500,
+        response_format={"type": "json_object"}
     )
     return json.loads(resp.choices[0].message.content)["titles"]
-
 
 def generate_article_html(prompt: str, num_sections: int = 5) -> dict:
     # タイトル生成
@@ -37,13 +50,12 @@ def generate_article_html(prompt: str, num_sections: int = 5) -> dict:
     # リード文生成
     lead_msg = (
         "あなたはSEO向け長文ライターです。\n"
-        "この記事のリード文（導入部）を日本語で300文字以上、<h2>や<h3>は使わずに書いてください。\n"
+        "この記事のリード文（導入部）を日本語で250文字程度、<h2>や<h3>は使わずに書いてください。3文ごとに改行を入れてわかりやすくしてください。\n"
         "「です・ます」調で、共感や具体例も交えてください。\n"
         "・リズムを付けるため極端に長い文を避け、句点で適度に分割。\n"
         "- 想定読者（ペルソナ）：{{今からAIを使い始める幅広い年代層。置いていかれてるかもしれないという不安のあるひとたち}}\n"
         "- 記事の目的（CV）:{{アフィリエイト広告収入}} \n"
         "・ 共感：情報提示 : 3:7〜4:6 程度にしてください\n"
-        "・ 読者が「これは自分の状況かも」と思えるよう、行動や状況の具体例を挟んでください\n"
         "・テンプレ的表現（「〜をご存じですか？」「注目されています」など）は避けてください\n"
         "JSONで{\"lead\": \"...\"}の形で返してください。"
     )
@@ -65,7 +77,7 @@ def generate_article_html(prompt: str, num_sections: int = 5) -> dict:
     for i in range(1, num_sections + 1):
         section_msg = (
             "あなたはSEO向け長文ライターです。\n"
-            f"この記事の第{i}章を日本語で340文字以上、<h2>で章タイトルを付けて書いてください。\n"
+            f"この記事の第{i}章を日本語で340文字以上、<h2>で章タイトルを付けて書いてください。2文ごとに改行を入れてわかりやすくしてください。\n"
             "「です・ます」調で、共感や具体例も交えてください。\n"
             "・リズムを付けるため極端に長い文を避け、句点で適度に分割。\n"
             "- 想定読者（ペルソナ）：{{今からAIを使い始める幅広い年代層。置いていかれてるかもしれないという不安のあるひとたち}}\n"
@@ -137,3 +149,4 @@ if __name__ == "__main__":
     print(generate_title_variants(prompt, n=3))
     article = generate_article_html(prompt)
     print(article)
+
