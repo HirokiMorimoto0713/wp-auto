@@ -1,0 +1,37 @@
+# WordPress設定
+WP_URL=https://your-site.com
+WP_USER=your_username
+WP_APP_PASS=your_app_password
+
+# OpenAI設定
+OPENAI_API_KEY=your_openai_api_key
+
+# 参考記事設定
+# keywords: 従来のキーワードベース記事生成（デフォルト）
+# url: 単一参考記事URLから記事生成
+# file: 単一ローカルファイルから記事生成
+# multiple: 複数参考記事から統合記事生成
+REFERENCE_MODE=keywords
+
+# 単一URL参考記事モード用設定
+REFERENCE_URL=https://example.com/reference-article
+
+# 単一ファイル参考記事モード用設定
+REFERENCE_FILE=./reference/sample.md
+
+# 複数参考記事モード用設定
+# 複数URLをカンマ区切りで指定
+REFERENCE_URLS=https://example1.com/article1,https://example2.com/article2,https://example3.com/article3
+
+# 複数ファイルをカンマ区切りで指定
+REFERENCE_FILES=./reference/sample1.md,./reference/sample2.md,./reference/guide.html
+
+# 参考記事使用時の記事テーマ
+ARTICLE_THEME=AI活用術完全ガイド
+
+# 🆕 スタイルガイド機能設定
+# true: スタイル特徴を抽出してYAMLガイドを生成 / false: 通常の統合モード
+USE_STYLE_GUIDE=true
+
+# デバッグ用：生成されたスタイルYAMLを表示
+DEBUG_STYLE=false 
