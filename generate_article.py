@@ -13,41 +13,256 @@ from dotenv import load_dotenv
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-KEYWORDS_CSV = "keywords.csv"
-INDEX_FILE = "last_index.txt"
+# 新しいキーワード管理システム用の定数とインポート
+NEW_KEYWORDS_CSV = "keywords.csv"  # 新しいキーワードファイル（統合形式）
+INDEX_FILE = "current_index.txt"
 
-def get_next_keyword(col: int = 0) -> str:
+def get_next_keyword_group() -> dict:
+    """
+    新しいCSVファイルから次のキーワードグループを取得
+    B列が同じ値の行をグループ化して返す
+    """
+    # インデックス取得
     idx = 0
     if os.path.exists(INDEX_FILE):
         with open(INDEX_FILE) as f:
             idx = int(f.read().strip() or 0)
-    with open(KEYWORDS_CSV, encoding="utf-8") as f:
+    
+    # CSVファイル読み込み
+    try:
+        # 現在のディレクトリまたはDocumentsディレクトリ内のファイルを読み込み
+        current_dir = os.getcwd()
+        print(f"現在のディレクトリ: {current_dir}")
+        
+        csv_paths = [
+            NEW_KEYWORDS_CSV,  # 現在のディレクトリ（直接指定）
+            os.path.join(current_dir, NEW_KEYWORDS_CSV),  # 現在のディレクトリ（絶対パス）
+            os.path.expanduser(f"~/Documents/{NEW_KEYWORDS_CSV}"),  # Documentsディレクトリ
+            os.path.expanduser(f"~/{NEW_KEYWORDS_CSV}")  # ホームディレクトリ
+        ]
+        
+        print(f"検索パス: {csv_paths}")
+        
+        csv_path = None
+        for path in csv_paths:
+            print(f"チェック中: {path} -> 存在: {os.path.exists(path)}")
+            if os.path.exists(path):
+                csv_path = path
+                break
+                
+        if not csv_path:
+            raise FileNotFoundError(f"CSVファイルが見つかりません: {csv_paths}")
+            
+        print(f"CSVファイル読み込み: {csv_path}")
+        df = pd.read_csv(csv_path, header=None, names=['keyword', 'group_id', 'main_category', 'sub_category'])
+        
+        # グループIDでソート
+        df = df.sort_values('group_id')
+        
+        # ユニークなグループIDを取得
+        unique_groups = df['group_id'].unique()
+        unique_groups = sorted([g for g in unique_groups if pd.notna(g)])
+        
+        if not unique_groups:
+            raise ValueError("有効なグループIDが見つかりません")
+        
+        # 現在のグループID取得
+        current_group_id = unique_groups[idx % len(unique_groups)]
+        
+        # 該当グループの全行を取得
+        group_data = df[df['group_id'] == current_group_id]
+        
+        # 次のインデックスを保存
+        with open(INDEX_FILE, "w") as f:
+            f.write(str((idx + 1) % len(unique_groups)))
+        
+        # グループデータを辞書形式で返す
+        keywords = group_data['keyword'].tolist()
+        main_category = group_data['main_category'].iloc[0] if pd.notna(group_data['main_category'].iloc[0]) else ""
+        sub_category = group_data['sub_category'].iloc[0] if pd.notna(group_data['sub_category'].iloc[0]) else ""
+        
+        return {
+            'group_id': current_group_id,
+            'keywords': keywords,
+            'main_category': main_category,
+            'sub_category': sub_category,
+            'primary_keyword': keywords[0] if keywords else ""
+        }
+        
+    except Exception as e:
+        print(f"⚠️ 新しいCSVファイル読み込みエラー: {e}")
+        # フォールバック: 旧システム使用
+        return {
+            'group_id': 1,
+            'keywords': [get_next_keyword_legacy()],
+            'main_category': "",
+            'sub_category': "",
+            'primary_keyword': get_next_keyword_legacy()
+        }
+
+def get_next_keyword_legacy(col: int = 0) -> str:
+    """
+    旧システム用のキーワード取得（フォールバック用）
+    """
+    idx = 0
+    if os.path.exists(INDEX_FILE):
+        with open(INDEX_FILE) as f:
+            idx = int(f.read().strip() or 0)
+    
+    # 旧keywords.csvファイル確認
+    old_keywords_csv = "keywords.csv"
+    if not os.path.exists(old_keywords_csv):
+        return "ChatGPT 使い方"  # デフォルトキーワード
+    
+    with open(old_keywords_csv, encoding="utf-8") as f:
         reader = csv.reader(f)
         next(reader)  # 1行スキップ
         keywords = [row[col] for row in reader if len(row) > col]
+    
+    if not keywords:
+        return "ChatGPT 使い方"
+    
     keyword = keywords[idx % len(keywords)]
     with open(INDEX_FILE, "w") as f:
         f.write(str((idx + 1) % len(keywords)))
     return keyword
+
+def generate_integrated_article_from_keywords(keyword_group: dict, style_features: dict = None, num_sections: int = 5) -> dict:
+    """
+    複数キーワードを統合したSEO効果的な記事を生成
+    """
+    keywords = keyword_group['keywords']
+    primary_keyword = keyword_group['primary_keyword']
+    
+    print(f"🎯 統合記事生成開始:")
+    print(f"   メインキーワード: {primary_keyword}")
+    print(f"   関連キーワード: {', '.join(keywords[1:]) if len(keywords) > 1 else 'なし'}")
+    
+    # 統合的なプロンプト作成
+    keywords_text = "、".join(keywords)
+    integrated_prompt = f"""
+{primary_keyword}を中心とした包括的なガイド記事を作成してください。
+
+## 含めるべきキーワード（SEO最適化）
+{chr(10).join([f"- {kw}" for kw in keywords])}
+
+## 記事の方針
+- 上記のキーワードを自然に統合した内容
+- SEO効果的な構成で検索ニーズに対応
+- 初心者から上級者まで幅広いレベルに対応
+- 実践的で具体的なガイド
+- 各キーワードの検索意図を満たす内容を含む
+"""
+
+    # スタイルガイド使用判定
+    if style_features and not style_features.get('error'):
+        print("🎨 スタイルガイド付きで記事生成")
+        article = generate_keyword_article_with_style_integrated(integrated_prompt, keywords, style_features, num_sections)
+    else:
+        print("📝 標準モードで記事生成")
+        article = generate_article_html_integrated(integrated_prompt, keywords, num_sections)
+    
+    # 生成された記事に基づいて最適なタイトルを生成
+    optimized_title = generate_optimized_title_from_content(article['content'], keywords, primary_keyword)
+    article['title'] = optimized_title
+    
+    # カテゴリ情報を追加
+    article['main_category'] = keyword_group['main_category']
+    article['sub_category'] = keyword_group['sub_category']
+    article['keywords_used'] = keywords
+    article['primary_keyword'] = primary_keyword
+    article['integrated_article'] = True
+    
+    return article
+
+def generate_optimized_title_from_content(content: str, keywords: list, primary_keyword: str) -> str:
+    """
+    完成した記事内容に基づいて最適なタイトルを生成
+    """
+    keywords_text = "、".join(keywords)
+    
+    title_prompt = f"""
+あなたはSEOと読者心理に長けたブログ編集者です。
+
+以下の記事内容と対象キーワードを基に、最適なタイトルを1つ生成してください。
+
+## 対象キーワード
+メイン: {primary_keyword}
+関連: {', '.join(keywords[1:]) if len(keywords) > 1 else 'なし'}
+
+## 記事内容の要約
+{content[:800]}...
+
+## タイトル生成指針
+- 既存のタイトルスタイルを参考に魅力的なタイトル
+- メインキーワードを必ず含める
+- 関連キーワードも自然に含める（可能な限り）
+- SEO効果的でクリックされやすい
+- 記事の実際の内容を正確に表現
+- 初心者にも分かりやすい表現
+
+## 参考タイトルスタイル（柔らかくキャッチーな文体）
+- "超簡単！〇〇を5分で覚える方法"
+- "初心者さんでも安心。〇〇の優しい始め方"
+- "〇〇で毎日がちょっと楽しくなった話"
+- "知らなきゃ損！〇〇の便利な使い方"
+- "今すぐ試したい〇〇のコツ7選"
+- "〇〇初心者の私が実際にやってみた結果"
+- "意外と簡単だった〇〇の活用術"
+
+JSONで{{"title": "..."}}の形で返してください。
+"""
+    
+    try:
+        resp = openai.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": title_prompt},
+                {"role": "user", "content": f"上記の記事内容とキーワードに基づいて、最適なタイトルを生成してください。"}
+            ],
+            temperature=0.8,
+            max_tokens=200,
+            response_format={"type": "json_object"}
+        )
+        return json.loads(resp.choices[0].message.content)["title"]
+    except Exception as e:
+        print(f"⚠️ タイトル生成エラー: {e}")
+        # フォールバック：従来方式
+        return generate_title_variants(f"{primary_keyword}について", n=1)[0]
+
+# 既存の get_next_keyword 関数を削除して新システムに対応
+def get_next_keyword(col: int = 0) -> str:
+    """
+    後方互換性のための関数（非推奨）
+    新しいシステムでは get_next_keyword_group() を使用
+    """
+    keyword_group = get_next_keyword_group()
+    return keyword_group['primary_keyword']
 
 def generate_title_variants(prompt: str, n: int = 5) -> list[str]:
     """
     テーマ(prompt)に合う"イケてる"日本語タイトルをn個生成
     """
     style_examples = [
-        "もう迷わない。初心者でもできる〇〇の始め方",
-        "これを知らずに〇〇始めるのは損してる",
-        "正直しんどい。でも〇〇で人生変わった話",
-        "2年間の失敗を経て、やっと見つけた〇〇",
-        "厳選7選｜2024年最新のおすすめ〇〇を紹介"
+        "超簡単！〇〇を5分で覚える方法",
+        "初心者さんでも安心。〇〇の優しい始め方",
+        "〇〇で毎日がちょっと楽しくなった話",
+        "知らなきゃ損！〇〇の便利な使い方",
+        "今すぐ試したい〇〇のコツ7選",
+        "〇〇初心者の私が実際にやってみた結果",
+        "意外と簡単だった〇〇の活用術"
     ]
 
     examples_text = "\n".join([f"- {ex}" for ex in style_examples])
 
     system_prompt = (
         "あなたはSEOと読者心理に長けたブログ編集者です。\n"
-        "以下のタイトル例の文体・構成・語感・テンションを参考に、\n"
-        "与えられたテーマに対する魅力的な日本語タイトルを複数生成してください。タイトル例をそのまま使うことは許しません。\n"
+        "以下のタイトル例の**柔らかくキャッチーな文体**を参考に、\n"
+        "与えられたテーマに対する親しみやすく魅力的な日本語タイトルを複数生成してください。\n"
+        "・親しみやすく、読みやすい表現を心がける\n"
+        "・初心者でも安心できるような優しい語調\n"
+        "・読者の興味を引く具体的なメリット表現\n"
+        "・タイトル例をそのまま使うことは許しません\n"
         "タイトル例:\n" + examples_text + "\n"
         "出力はJSON形式で → {\"titles\": [\"…\", \"…\", …]}"
     )
@@ -73,13 +288,11 @@ def generate_article_html(prompt: str, num_sections: int = 5) -> dict:
     "あなたは初心者にやさしいSEOライターです。\n"
         "この記事のリード文（導入部）を日本語で250文字程度、<h2>や<h3>は使わずに書いてください。3文ごとに改行を入れてわかりやすくしてください。\n"
         "「です・ます」調で、共感や具体例も交えてください。\n\n"
-        "🎨 絵文字の使用ガイドライン：\n"
-        "- 文章の約20%に適切な絵文字を自然に配置\n"
-        "- 親しみやすさを演出する絵文字（😊 💡 ✨ 🎯 📝 🚀など）を効果的に活用\n\n"
-    "・リズムを付けるため極端に長い文を避け、句点で適度に分割\n"
+        "・リズムを付けるため極端に長い文を避け、句点で適度に分割\n"
         "・想定読者：今からAIを使い始める幅広い年代層（初心者向け）\n"
         "・共感：情報提示 = 3:7〜4:6 程度\n"
         "・テンプレ的表現は避け、親しみやすい表現を使用\n"
+        "・本文では絵文字は使用せず、シンプルで読みやすい文章にしてください\n"
         "JSONで{\"lead\": \"...\"}の形で返してください。"
     )
     lead_resp = openai.chat.completions.create(
@@ -98,21 +311,35 @@ def generate_article_html(prompt: str, num_sections: int = 5) -> dict:
     # 章ごと生成
     sections = []
     for i in range(1, num_sections + 1):
+        # 表の使用制限（1記事あたり2つまで）
+        can_use_table = i <= 2  # 第1章と第2章のみ表を使用可能
+        
         section_msg = (
             "あなたは初心者にやさしいSEOライターです。\n"
-            "この記事の第{i}章を日本語で340文字以上、<h2>で章タイトルを付けて書いてください。2文ごとに改行を入れてわかりやすくしてください。\n"
+            f"この記事の第{i}章を日本語で340文字以上、<h2>で章タイトルを付けて書いてください。2文ごとに改行を入れてわかりやすくしてください。\n"
             "「です・ます」調で、共感や具体例も交えてください。\n\n"
-            "🎨 絵文字の使用ガイドライン：\n"
-            "- 本文の約20%の文に適切な絵文字を自然に配置\n"
-            "- 感情表現（😊 🤔 😅）、強調（✨ 🎯 💡）、視覚的アクセント（📝 🚀 ⭐）を効果的に活用\n"
-            "- 文末や重要なポイントで絵文字を使用して親しみやすさを演出\n\n"
-            "プロンプト例が必要な場合は、以下の形式で対話形式で表現してください：\n"
-            "❌ コード風: ```プロンプト例```\n"
-            "✅ 対話風: 「ChatGPTに『〜について教えて』と聞いてみましょう」\n\n"
-            "表を使用する場合は、以下のスタイルを参考にしてください：\n"
-            "- 「NG例」「改善例」「効果・ポイント」の3列構成\n"
-            "- 「Q: 質問」「A: 回答」のFAQ形式\n"
-            "- 「ステップ」「内容」「ポイント」の手順表\n\n"
+            "📝 文章スタイル指針：\n"
+            "- 本文の地の文では絵文字は使用しない（シンプルで読みやすい文章）\n"
+            "- 表内での絵文字使用は可（視覚的な整理に効果的）\n\n"
+            "🎨 ビジュアライズを積極的に活用してください：\n"
+            "- 箇条書き（<ul><li>）で重要ポイントを整理\n"
+            "- 番号付きリスト（<ol><li>）で手順や順序を明確化\n"
+            "- 小見出し（<h3>）で内容を細かく区切る\n"
+            "- 太字（<strong>）で要点を強調\n"
+            "- 長い段落は適度に分割し、読みやすく構成\n"
+            "- 情報を階層化して理解しやすくする\n\n"
+            "🎯 おすすめプロンプト例を積極的に含めてください：\n"
+            "- 「ChatGPTに『具体的なシチュエーションを教えて』と聞いてみましょう」\n"
+            "- 「『〜を初心者向けに分かりやすく説明して』とお願いしてみてください」\n"
+            "- 「『ステップバイステップで教えて』と依頼すると詳しく教えてくれます」\n"
+            "- 実際に使える具体的なプロンプト例を2-3個含めてください\n\n"
+            f"{'📊 表を使用する場合は、以下のスタイルを参考にしてください：' if can_use_table else '📄 この章では表は使用せず、文章での説明を中心にしてください：'}\n"
+            f"{'- 「NG例」「改善例」「効果・ポイント」の3列構成' if can_use_table else '- 分かりやすい箇条書きでポイントを整理'}\n"
+            f"{'- 「ステップ」「内容」「ポイント」の手順表' if can_use_table else '- 段階的な説明で読者をサポート'}\n\n"
+            "📌 重要な制約：\n"
+            "- FAQは最後に一括で記述するため、この章ではFAQ形式の表は使用しないでください\n"
+            "- Q&A形式の内容は避け、説明や手順を中心に記述してください\n"
+            f"{'- 記事全体で表は2つまでなので、この章で使用する場合は効果的に活用してください' if can_use_table else '- この章では表を使用せず、テキストでの説明に集中してください'}\n\n"
             "・リズムを付けるため極端に長い文を避け、句点で適度に分割\n"
             "・想定読者：今からAIを使い始める幅広い年代層（初心者向け）\n"
             "・テンプレ的表現は避け、親しみやすい表現を使用\n"
@@ -134,8 +361,11 @@ def generate_article_html(prompt: str, num_sections: int = 5) -> dict:
     # FAQ生成
     faq_section = generate_faq_section(prompt, lead_text + "\n".join(sections[:2]))  # 最初の2章を参考に
     
+    # 結論セクション生成
+    conclusion_section = generate_conclusion_section(prompt, lead_text + "\n".join(sections) + "\n" + faq_section)
+    
     # 結合
-    content = lead_text + "\n" + "\n".join(sections) + "\n" + faq_section
+    content = lead_text + "\n" + "\n".join(sections) + "\n" + faq_section + "\n" + conclusion_section
     return {
         "title": title,
         "content": content
@@ -463,8 +693,11 @@ def generate_article_from_reference(prompt: str, reference_structure: dict, num_
     # FAQ生成
     faq_section = generate_faq_section(prompt, lead_text + "\n".join(sections[:2]))  # 最初の2章を参考に
     
+    # 結論セクション生成
+    conclusion_section = generate_conclusion_section(prompt, lead_text + "\n".join(sections) + "\n" + faq_section)
+    
     # 結合
-    content = lead_text + "\n" + "\n".join(sections) + "\n" + faq_section
+    content = lead_text + "\n" + "\n".join(sections) + "\n" + faq_section + "\n" + conclusion_section
     return {
         "title": title,
         "content": content,
@@ -764,8 +997,11 @@ def generate_article_from_multiple_references(prompt: str, integrated_structure:
     # FAQ生成
     faq_section = generate_faq_section(prompt, lead_text + "\n".join(sections[:2]))  # 最初の2章を参考に
     
+    # 結論セクション生成
+    conclusion_section = generate_conclusion_section(prompt, lead_text + "\n".join(sections) + "\n" + faq_section)
+    
     # 結合
-    content = lead_text + "\n" + "\n".join(sections) + "\n" + faq_section
+    content = lead_text + "\n" + "\n".join(sections) + "\n" + faq_section + "\n" + conclusion_section
     return {
         "title": title,
         "content": content,
@@ -849,7 +1085,7 @@ def analyze_style_features(content: str, source: str) -> dict:
     all_headings = h1_matches + h2_matches + h3_matches
     
     # 絵文字分析
-    emoji_pattern = re.compile(r'[🚀🔥💡📊🎯⚡🌟✨📈🎉💪🔧📝🆕👍🔍📚🎨🎪]')
+    emoji_pattern = re.compile(r'[��🔥💡📊🎯⚡🌟✨📈🎉💪🔧📝🆕👍🔍📚🎨🎪]')
     emoji_in_headings = sum(1 for h in all_headings if emoji_pattern.search(h))
     total_emojis = len(emoji_pattern.findall(content))
     
@@ -1117,7 +1353,7 @@ def generate_keyword_article_with_style(keyword: str, style_features: dict, num_
 - **対話形式のプロンプト例**: 実際の会話形式で表現（例：「〜について教えて」）
 - 語調: {"です・ます調" if style_features.get('tone') == 'polite' else "自然な混合調"}
 - 文長: 平均{style_features.get('avg_sentence_length', 30):.0f}文字程度
-- **本文絵文字**: 文章の約20%に適切な絵文字を自然に配置（感情表現・強調・視覚的アクセント）
+- **本文**: 地の文では絵文字を使用せず、シンプルで読みやすい文章（表内での絵文字使用は可）
 
 ## 記事生成指針（AI-GENEスタイル準拠）
 以下の要素を必ず含めてください：
@@ -1173,10 +1409,14 @@ def generate_keyword_article_with_style(keyword: str, style_features: dict, num_
     sections = []
     for i in range(1, num_sections + 1):
         # 3章目に実践例を挿入
+        # 表の使用制限（1記事あたり2つまで）
+        can_use_table = i <= 2  # 第1章と第2章のみ表を使用可能
+        
         if i == 3 and practical_examples:
-            user_content = f"「{keyword}」についての記事の第{i}章を、スタイルガイドに従って340文字以上で生成してください。見出しは&lt;h2&gt;&lt;/h2&gt;タグで囲んでください。\n\n🎨 絵文字ガイドライン：本文の約20%の文に自然に絵文字を配置（😊 ✨ 🎯 💡 📝 🚀など）\n\n以下の実践例を活用して実用的な内容にしてください。\n\n実践例:\n{practical_examples}\n\nJSONで{{\"section\": \"...\"}}の形で返してください。"
+            user_content = f"「{keyword}」についての記事の第{i}章を、スタイルガイドに従って340文字以上で生成してください。見出しは&lt;h2&gt;&lt;/h2&gt;タグで囲んでください。\n\n📝 文章スタイル指針：\n- 本文の地の文では絵文字は使用しない（シンプルで読みやすい文章）\n- 表内での絵文字使用は可（視覚的な整理に効果的）\n\n🎨 ビジュアライズを積極的に活用してください：\n- 箇条書き（&lt;ul&gt;&lt;li&gt;）で重要ポイントを整理\n- 番号付きリスト（&lt;ol&gt;&lt;li&gt;）で手順や順序を明確化\n- 小見出し（&lt;h3&gt;）で内容を細かく区切る\n- 太字（&lt;strong&gt;）で要点を強調\n- 長い段落は適度に分割し、読みやすく構成\n- 情報を階層化して理解しやすくする\n\n🎯 おすすめプロンプト例を積極的に含めてください：\n- 「ChatGPTに『具体的なシチュエーションを教えて』と聞いてみましょう」\n- 「『〜を初心者向けに分かりやすく説明して』とお願いしてみてください」\n- 実際に使える具体的なプロンプト例を2-3個含めてください\n\n📌 重要な制約：\n- FAQは最後に一括で記述するため、この章ではFAQ形式の表は使用しないでください\n- Q&A形式の内容は避け、説明や手順を中心に記述してください\n- この章では表を使用せず、テキストでの説明に集中してください\n\n以下の実践例を活用して実用的な内容にしてください。\n\n実践例:\n{practical_examples}\n\nJSONで{{\"section\": \"...\"}}の形で返してください。"
         else:
-            user_content = f"「{keyword}」についての記事の第{i}章を、スタイルガイドに従って340文字以上で生成してください。見出しは&lt;h2&gt;&lt;/h2&gt;タグで囲んでください。\n\n🎨 絵文字ガイドライン：本文の約20%の文に自然に絵文字を配置（😊 ✨ 🎯 💡 📝 🚀など）\n\n可能な限り表・具体例・プロンプト例を含めて実践的な内容にしてください。JSONで{{\"section\": \"...\"}}の形で返してください。"
+            table_instruction = "📊 表を使用する場合は効果的に活用してください（記事全体で2つまで）" if can_use_table else "�� この章では表は使用せず、文章での説明を中心にしてください"
+            user_content = f"「{keyword}」についての記事の第{i}章を、スタイルガイドに従って340文字以上で生成してください。見出しは&lt;h2&gt;&lt;/h2&gt;タグで囲んでください。\n\n📝 文章スタイル指針：\n- 本文の地の文では絵文字は使用しない（シンプルで読みやすい文章）\n- 表内での絵文字使用は可（視覚的な整理に効果的）\n\n🎨 ビジュアライズを積極的に活用してください：\n- 箇条書き（&lt;ul&gt;&lt;li&gt;）で重要ポイントを整理\n- 番号付きリスト（&lt;ol&gt;&lt;li&gt;）で手順や順序を明確化\n- 小見出し（&lt;h3&gt;）で内容を細かく区切る\n- 太字（&lt;strong&gt;）で要点を強調\n- 長い段落は適度に分割し、読みやすく構成\n- 情報を階層化して理解しやすくする\n\n🎯 おすすめプロンプト例を積極的に含めてください：\n- 「ChatGPTに『具体的なシチュエーションを教えて』と聞いてみましょう」\n- 「『〜を初心者向けに分かりやすく説明して』とお願いしてみてください」\n- 実際に使える具体的なプロンプト例を2-3個含めてください\n\n📌 重要な制約：\n- FAQは最後に一括で記述するため、この章ではFAQ形式の表は使用しないでください\n- Q&A形式の内容は避け、説明や手順を中心に記述してください\n- {table_instruction}\n\n可能な限り具体例・プロンプト例を含めて実践的な内容にしてください。JSONで{{\"section\": \"...\"}}の形で返してください。"
         
         section_resp = openai.chat.completions.create(
             model="gpt-4o",
@@ -1194,8 +1434,11 @@ def generate_keyword_article_with_style(keyword: str, style_features: dict, num_
     # FAQ生成
     faq_section = generate_faq_section(keyword, lead_text + "\n".join(sections[:2]))  # 最初の2章を参考に
     
+    # 結論セクション生成
+    conclusion_section = generate_conclusion_section(keyword, lead_text + "\n".join(sections) + "\n" + faq_section)
+    
     # 結合
-    content = lead_text + "\n" + "\n".join(sections) + "\n" + faq_section
+    content = lead_text + "\n" + "\n".join(sections) + "\n" + faq_section + "\n" + conclusion_section
     
     return {
         "title": title,
@@ -1282,11 +1525,419 @@ JSONで{"faq": "..."}の形で返してください。
     )
     return json.loads(faq_resp.choices[0].message.content)["faq"]
 
+def generate_conclusion_section(prompt: str, article_content: str) -> str:
+    """
+    記事の締めの言葉を2文で生成
+    """
+    conclusion_resp = openai.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {
+                "role": "system",
+                "content": """
+あなたは読者の心に響く締めの言葉を書く専門ライターです。
+与えられた記事テーマと内容から、記事の締めくくりとして最適な2文を生成してください。
+
+## 出力要件
+- **必ず2文のみ**で構成
+- HTMLで&lt;p&gt;タグを使用
+- 読者のモチベーションを高める内容
+- 行動を促す（背中を押す）メッセージ
+- 「です・ます」調で統一
+- 適切な絵文字を1-2個使用して親しみやすさを演出
+- 記事全体を振り返り、読者への感謝や励ましを込める
+
+## 文例パターン
+- 「今回紹介した方法を実践すれば、きっと〜できるようになります。あなたのチャレンジを応援しています！��」
+- 「〜への第一歩を踏み出すのは今日からです。ぜひ実際に試してみてくださいね 😊」
+
+JSONで{"conclusion": "..."}の形で返してください。
+"""
+            },
+            {"role": "user", "content": f"記事テーマ: {prompt}\n\n記事内容の要約: {article_content[:500]}..."}
+        ],
+        temperature=0.7,
+        max_tokens=300,
+        response_format={"type": "json_object"}
+    )
+    return json.loads(conclusion_resp.choices[0].message.content)["conclusion"]
+
+def generate_article_html_integrated(integrated_prompt: str, keywords: list, num_sections: int = 5) -> dict:
+    """
+    複数キーワードを統合した記事をHTMLで生成（標準モード）
+    """
+    primary_keyword = keywords[0] if keywords else "AI活用"
+    keywords_text = "、".join(keywords)
+    
+    # リード文生成
+    lead_msg = (
+        "あなたは初心者にやさしいSEOライターです。\n"
+        "複数のキーワードを統合した記事のリード文（導入部）を日本語で250文字程度、<h2>や<h3>は使わずに書いてください。3文ごとに改行を入れてわかりやすくしてください。\n"
+        "「です・ます」調で、共感や具体例も交えてください。\n\n"
+        f"## 対象キーワード\n{chr(10).join([f'- {kw}' for kw in keywords])}\n\n"
+        "・リズムを付けるため極端に長い文を避け、句点で適度に分割\n"
+        "・想定読者：今からAIを使い始める幅広い年代層（初心者向け）\n"
+        "・共感：情報提示 = 3:7〜4:6 程度\n"
+        "・テンプレ的表現は避け、親しみやすい表現を使用\n"
+        "・本文では絵文字は使用せず、シンプルで読みやすい文章にしてください\n"
+        "・すべてのキーワードの検索意図に応える導入にする\n"
+        "JSONで{\"lead\": \"...\"}の形で返してください。"
+    )
+    
+    lead_resp = openai.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": lead_msg},
+            {"role": "user", "content": integrated_prompt}
+        ],
+        temperature=0.7,
+        max_tokens=800,
+        response_format={"type": "json_object"}
+    )
+    lead_text = json.loads(lead_resp.choices[0].message.content)["lead"]
+
+    # 章ごと生成（キーワード統合版）
+    sections = []
+    for i in range(1, num_sections + 1):
+        # 表の使用制限（1記事あたり2つまで）
+        can_use_table = i <= 2  # 第1章と第2章のみ表を使用可能
+        
+        section_msg = (
+            "あなたは初心者にやさしいSEOライターです。\n"
+            f"複数キーワードを統合した記事の第{i}章を日本語で340文字以上、<h2>で章タイトルを付けて書いてください。2文ごとに改行を入れてわかりやすくしてください。\n"
+            "「です・ます」調で、共感や具体例も交えてください。\n\n"
+            f"## 対象キーワード（すべて自然に含めてください）\n{chr(10).join([f'- {kw}' for kw in keywords])}\n\n"
+            "�� 文章スタイル指針：\n"
+            "- 本文の地の文では絵文字は使用しない（シンプルで読みやすい文章）\n"
+            "- 表内での絵文字使用は可（視覚的な整理に効果的）\n\n"
+            "🎨 ビジュアライズを積極的に活用してください：\n"
+            "- 箇条書き（<ul><li>）で重要ポイントを整理\n"
+            "- 番号付きリスト（<ol><li>）で手順や順序を明確化\n"
+            "- 小見出し（<h3>）で内容を細かく区切る\n"
+            "- 太字（<strong>）で要点を強調\n"
+            "- 長い段落は適度に分割し、読みやすく構成\n"
+            "- 情報を階層化して理解しやすくする\n\n"
+            "🎯 おすすめプロンプト例を積極的に含めてください：\n"
+            "- 「ChatGPTに『具体的なシチュエーションを教えて』と聞いてみましょう」\n"
+            "- 「『〜を初心者向けに分かりやすく説明して』とお願いしてみてください」\n"
+            "- 「『ステップバイステップで教えて』と依頼すると詳しく教えてくれます」\n"
+            "- 実際に使える具体的なプロンプト例を2-3個含めてください\n\n"
+            f"{'📊 表を使用する場合は、以下のスタイルを参考にしてください：' if can_use_table else '📄 この章では表は使用せず、文章での説明を中心にしてください：'}\n"
+            f"{'- 「NG例」「改善例」「効果・ポイント」の3列構成' if can_use_table else '- 分かりやすい箇条書きでポイントを整理'}\n"
+            f"{'- 「ステップ」「内容」「ポイント」の手順表' if can_use_table else '- 段階的な説明で読者をサポート'}\n\n"
+            "📌 重要な制約：\n"
+            "- FAQは最後に一括で記述するため、この章ではFAQ形式の表は使用しないでください\n"
+            "- Q&A形式の内容は避け、説明や手順を中心に記述してください\n"
+            f"{'- 記事全体で表は2つまでなので、この章で使用する場合は効果的に活用してください' if can_use_table else '- この章では表を使用せず、テキストでの説明に集中してください'}\n\n"
+            "・リズムを付けるため極端に長い文を避け、句点で適度に分割\n"
+            "・想定読者：今からAIを使い始める幅広い年代層（初心者向け）\n"
+            "・テンプレ的表現は避け、親しみやすい表現を使用\n"
+            "・各キーワードの検索意図を満たす内容を含める\n"
+            "JSONで{\"section\": \"...\"}の形で返してください。"
+        )
+        
+        section_resp = openai.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": section_msg},
+                {"role": "user", "content": integrated_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=800,
+            response_format={"type": "json_object"}
+        )
+        section_text = json.loads(section_resp.choices[0].message.content)["section"]
+        sections.append(section_text)
+
+    # FAQ生成（キーワード統合版）
+    faq_section = generate_faq_section_integrated(keywords, lead_text + "\n".join(sections[:2]))
+    
+    # 結論セクション生成（キーワード統合版）
+    conclusion_section = generate_conclusion_section_integrated(keywords, lead_text + "\n".join(sections) + "\n" + faq_section)
+    
+    # 結合
+    content = lead_text + "\n" + "\n".join(sections) + "\n" + faq_section + "\n" + conclusion_section
+    
+    return {
+        "title": f"{primary_keyword}の完全ガイド",  # 仮タイトル（後で置き換え）
+        "content": content,
+        "integrated_article": True
+    }
+
+def generate_keyword_article_with_style_integrated(integrated_prompt: str, keywords: list, style_features: dict, num_sections: int = 5) -> dict:
+    """
+    複数キーワードを統合した記事をスタイルガイド付きで生成
+    """
+    primary_keyword = keywords[0] if keywords else "AI活用"
+    keywords_text = "、".join(keywords)
+    
+    if "error" in style_features:
+        # エラー時は標準モードにフォールバック
+        return generate_article_html_integrated(integrated_prompt, keywords, num_sections)
+    
+    # スタイルガイドYAMLを生成
+    style_yaml = generate_style_yaml(style_features)
+    
+    # スタイルガイド付きシステムプロンプト（統合版）
+    system_prompt = f"""
+あなたは視覚的にわかりやすい技術ライターです。
+
+## スタイルガイド（参考記事から抽出されたスタイル特徴）
+```yaml
+{style_yaml}
+```
+
+## 対象キーワード（SEO最適化）
+{chr(10).join([f"- {kw}" for kw in keywords])}
+
+## 出力要件
+- 上記YAMLのスタイル特徴を**厳密に反映**して記事を生成
+- すべて **HTML** で書く（WordPressに適した形式）
+- 見出しは &lt;h2&gt;タグを使用（絵文字込み）
+- 見出し頻度: {style_features.get('h2_per_1000_words', 3):.1f}本/1000語 程度
+- 絵文字使用: {style_features.get('emoji_in_headings_ratio', 0)*100:.0f}%の見出しに適切な絵文字
+- 箇条書きは &lt;ul&gt;&lt;li&gt;タグを使用
+- 箇条書き密度: {style_features.get('bullet_density', 0)*100:.1f}%程度
+- **リッチな表を積極活用**: 比較・手順・データは&lt;table&gt;&lt;tr&gt;&lt;td&gt;タグで構造化
+- **対話形式のプロンプト例**: 実際の会話形式で表現（例：「〜について教えて」）
+- 語調: {"です・ます調" if style_features.get('tone') == 'polite' else "自然な混合調"}
+- 文長: 平均{style_features.get('avg_sentence_length', 30):.0f}文字程度
+- **本文**: 地の文では絵文字を使用せず、シンプルで読みやすい文章（表内での絵文字使用は可）
+
+## 記事生成指針（AI-GENEスタイル準拠）
+以下の要素を必ず含めてください：
+1. **比較表（リッチスタイル）**: 「NG例」「改善例」「効果」の3列構成でわかりやすく
+2. **対話形式の例**: プロンプトは会話形式で表現（「ChatGPTに『〜について教えて』と聞いてみましょう」）
+3. **FAQ形式**: Q&A形式で読みやすく情報を整理
+4. **段階的な手順**: 初心者でもわかるステップバイステップ構成
+5. **具体的な事例**: 実際に使える例を豊富に提供
+
+## 統合記事生成
+複数のキーワードを自然に統合し、各キーワードの検索意図を満たす包括的な記事を生成してください。
+- SEOを意識した構成
+- 検索ユーザーのニーズに応える内容
+- 参考記事のスタイルを忠実に再現
+- 表・プロンプト例・具体例を積極的に活用
+"""
+
+    # リード文生成
+    lead_resp = openai.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"複数キーワード「{keywords_text}」について、スタイルガイドに従ったリード文（導入部）を250文字程度で生成してください。JSONで{{\"lead\": \"...\"}}の形で返してください。"}
+        ],
+        temperature=0.7,
+        max_tokens=800,
+        response_format={"type": "json_object"}
+    )
+    lead_text = json.loads(lead_resp.choices[0].message.content)["lead"]
+
+    # 実践的な例・プロンプト例を生成
+    try:
+        practical_examples = generate_practical_examples_integrated(keywords)
+        print(f"✅ 統合実践例生成完了: {len(practical_examples)}文字")
+    except Exception as e:
+        print(f"⚠️ 統合実践例生成失敗: {e}")
+        practical_examples = ""
+
+    # 章ごと生成
+    sections = []
+    for i in range(1, num_sections + 1):
+        # 3章目に実践例を挿入
+        # 表の使用制限（1記事あたり2つまで）
+        can_use_table = i <= 2  # 第1章と第2章のみ表を使用可能
+        
+        if i == 3 and practical_examples:
+            user_content = f"複数キーワード「{keywords_text}」についての記事の第{i}章を、スタイルガイドに従って340文字以上で生成してください。見出しは&lt;h2&gt;&lt;/h2&gt;タグで囲んでください。\n\n📝 文章スタイル指針：\n- 本文の地の文では絵文字は使用しない（シンプルで読みやすい文章）\n- 表内での絵文字使用は可（視覚的な整理に効果的）\n\n🎨 ビジュアライズを積極的に活用してください：\n- 箇条書き（&lt;ul&gt;&lt;li&gt;）で重要ポイントを整理\n- 番号付きリスト（&lt;ol&gt;&lt;li&gt;）で手順や順序を明確化\n- 小見出し（&lt;h3&gt;）で内容を細かく区切る\n- 太字（&lt;strong&gt;）で要点を強調\n- 長い段落は適度に分割し、読みやすく構成\n- 情報を階層化して理解しやすくする\n\n🎯 おすすめプロンプト例を積極的に含めてください：\n- 「ChatGPTに『具体的なシチュエーションを教えて』と聞いてみましょう」\n- 「『〜を初心者向けに分かりやすく説明して』とお願いしてみてください」\n- 実際に使える具体的なプロンプト例を2-3個含めてください\n\n📌 重要な制約：\n- FAQは最後に一括で記述するため、この章ではFAQ形式の表は使用しないでください\n- Q&A形式の内容は避け、説明や手順を中心に記述してください\n- この章では表を使用せず、テキストでの説明に集中してください\n\n以下の実践例を活用して実用的な内容にしてください。\n\n実践例:\n{practical_examples}\n\nJSONで{{\"section\": \"...\"}}の形で返してください。"
+        else:
+            table_instruction = "📊 表を使用する場合は効果的に活用してください（記事全体で2つまで）" if can_use_table else "📄 この章では表は使用せず、文章での説明を中心にしてください"
+            user_content = f"複数キーワード「{keywords_text}」についての記事の第{i}章を、スタイルガイドに従って340文字以上で生成してください。見出しは&lt;h2&gt;&lt;/h2&gt;タグで囲んでください。\n\n📝 文章スタイル指針：\n- 本文の地の文では絵文字は使用しない（シンプルで読みやすい文章）\n- 表内での絵文字使用は可（視覚的な整理に効果的）\n\n🎨 ビジュアライズを積極的に活用してください：\n- 箇条書き（&lt;ul&gt;&lt;li&gt;）で重要ポイントを整理\n- 番号付きリスト（&lt;ol&gt;&lt;li&gt;）で手順や順序を明確化\n- 小見出し（&lt;h3&gt;）で内容を細かく区切る\n- 太字（&lt;strong&gt;）で要点を強調\n- 長い段落は適度に分割し、読みやすく構成\n- 情報を階層化して理解しやすくする\n\n🎯 おすすめプロンプト例を積極的に含めてください：\n- 「ChatGPTに『具体的なシチュエーションを教えて』と聞いてみましょう」\n- 「『〜を初心者向けに分かりやすく説明して』とお願いしてみてください」\n- 実際に使える具体的なプロンプト例を2-3個含めてください\n\n📌 重要な制約：\n- FAQは最後に一括で記述するため、この章ではFAQ形式の表は使用しないでください\n- Q&A形式の内容は避け、説明や手順を中心に記述してください\n- {table_instruction}\n\n可能な限り具体例・プロンプト例を含めて実践的な内容にしてください。各キーワードの検索意図を満たす内容を含めてください。JSONで{{\"section\": \"...\"}}の形で返してください。"
+        
+        section_resp = openai.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content}
+            ],
+            temperature=0.7,
+            max_tokens=800,
+            response_format={"type": "json_object"}
+        )
+        section_text = json.loads(section_resp.choices[0].message.content)["section"]
+        sections.append(section_text)
+
+    # FAQ生成
+    faq_section = generate_faq_section_integrated(keywords, lead_text + "\n".join(sections[:2]))  # 最初の2章を参考に
+    
+    # 結論セクション生成
+    conclusion_section = generate_conclusion_section_integrated(keywords, lead_text + "\n".join(sections) + "\n" + faq_section)
+    
+    # 結合
+    content = lead_text + "\n" + "\n".join(sections) + "\n" + faq_section + "\n" + conclusion_section
+    
+    return {
+        "title": f"{primary_keyword}の完全ガイド",  # 仮タイトル（後で置き換え）
+        "content": content,
+        "reference_used": True,
+        "style_guided": True,
+        "keyword_based": True,
+        "integrated_article": True,
+        "keywords_used": keywords,
+        "primary_keyword": primary_keyword,
+        "style_features": style_features,
+        "style_yaml": style_yaml
+    }
+
+def generate_practical_examples_integrated(keywords: list) -> str:
+    """
+    統合キーワードに応じた実践的な例・プロンプト例を生成
+    """
+    keywords_text = "、".join(keywords)
+    primary_keyword = keywords[0] if keywords else "AI活用"
+    
+    example_resp = openai.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {
+                "role": "system", 
+                "content": """
+あなたは初心者にやさしい実践例・対話例の専門家です。
+与えられた複数のキーワードを統合して、読者が実際に試せる具体的な例を生成してください。
+
+## 出力形式（AI-GENEスタイル準拠）
+以下の要素を含むHTMLで返してください：
+1. **比較表（3列構成）**: 「NG例」「改善例」「効果・ポイント」の構成で視覚的にわかりやすく
+2. **対話形式の例**: 「ChatGPTに『〜について教えて』と聞いてみましょう」形式
+3. **FAQ形式**: 「Q: よくある質問」「A: わかりやすい回答」形式
+4. **段階的な手順**: 初心者でも迷わない1-2-3ステップ構成
+
+## 重要な指針
+- プロンプト例は必ず対話形式で表現（コード風ではなく、自然な会話）
+- 表は情報が整理され、初心者が一目で理解できるスタイル
+- 専門用語は使わず、やさしい言葉で説明
+- 複数キーワードを自然に統合した内容
+
+JSONで{"examples": "..."}の形で返してください。
+"""
+            },
+            {"role": "user", "content": f"複数キーワード「{keywords_text}」に関する実践的な例・比較表・プロンプト例を統合して生成してください。"}
+        ],
+        temperature=0.7,
+        max_tokens=1000,
+        response_format={"type": "json_object"}
+    )
+    
+    return json.loads(example_resp.choices[0].message.content)["examples"]
+
+def generate_faq_section_integrated(keywords: list, article_content: str) -> str:
+    """
+    統合キーワードに関連したFAQ 3つを生成（AI-GENEスタイル）
+    """
+    keywords_text = "、".join(keywords)
+    primary_keyword = keywords[0] if keywords else "AI活用"
+    
+    faq_resp = openai.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {
+                "role": "system",
+                "content": """
+あなたは読者の疑問を先読みするFAQ専門ライターです。
+与えられた複数のキーワードと記事内容から、読者が必ず抱く質問を3つ選んで、Q&A形式で回答してください。
+
+## 出力要件
+- HTMLで&lt;h3&gt;タグを使用してFAQセクションを作成
+- 各質問は&lt;h4&gt;タグで「Q: 質問内容」形式
+- 各回答は&lt;p&gt;タグで「A: 回答内容」形式  
+- 絵文字を効果的に活用（質問に❓、回答に✅など）
+- 初心者でもわかりやすい言葉で回答
+- 実践的で具体的な内容
+- 複数キーワードの関連性を考慮した質問
+
+## FAQ選定基準
+1. 初心者が必ず疑問に思うこと
+2. 記事を読んだ後の次のアクション
+3. よくある誤解や注意点
+4. キーワード間の関連性に関する質問
+
+JSONで{"faq": "..."}の形で返してください。
+"""
+            },
+            {"role": "user", "content": f"統合キーワード: {keywords_text}\n\n記事内容の要約: {article_content[:500]}..."}
+        ],
+        temperature=0.7,
+        max_tokens=800,
+        response_format={"type": "json_object"}
+    )
+    return json.loads(faq_resp.choices[0].message.content)["faq"]
+
+def generate_conclusion_section_integrated(keywords: list, article_content: str) -> str:
+    """
+    統合キーワード記事の締めの言葉を2文で生成
+    """
+    keywords_text = "、".join(keywords)
+    primary_keyword = keywords[0] if keywords else "AI活用"
+    
+    conclusion_resp = openai.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {
+                "role": "system",
+                "content": """
+あなたは読者の心に響く締めの言葉を書く専門ライターです。
+与えられた複数キーワードと記事内容から、記事の締めくくりとして最適な2文を生成してください。
+
+## 出力要件
+- **必ず2文のみ**で構成
+- HTMLで&lt;p&gt;タグを使用
+- 読者のモチベーションを高める内容
+- 行動を促す（背中を押す）メッセージ
+- 「です・ます」調で統一
+- 適切な絵文字を1-2個使用して親しみやすさを演出
+- 記事全体を振り返り、読者への感謝や励ましを込める
+- 複数キーワードの統合的な活用を促す内容
+
+## 文例パターン
+- 「今回紹介した方法を実践すれば、きっと〜できるようになります。あなたのチャレンジを応援しています！🚀」
+- 「〜への第一歩を踏み出すのは今日からです。ぜひ実際に試してみてくださいね 😊」
+
+JSONで{"conclusion": "..."}の形で返してください。
+"""
+            },
+            {"role": "user", "content": f"統合キーワード: {keywords_text}\n\n記事内容の要約: {article_content[:500]}..."}
+        ],
+        temperature=0.7,
+        max_tokens=300,
+        response_format={"type": "json_object"}
+    )
+    return json.loads(conclusion_resp.choices[0].message.content)["conclusion"]
+
 if __name__ == "__main__":
-    keyword = get_next_keyword(col=0)  # A列からキーワードを取得
-    prompt = f"{keyword}についての記事を書いてください。SEOを意識して、検索ユーザーのニーズに応える内容にしてください。"
-    print("★今回のプロンプト:", prompt)
-    print(generate_title_variants(prompt, n=3))
-    article = generate_article_html(prompt)
-    print(article)
+    # 新しい統合キーワードシステムのテスト
+    print("=== 統合キーワードシステムテスト ===")
+    
+    try:
+        keyword_group = get_next_keyword_group()
+        print(f"取得したキーワードグループ:")
+        print(f"  グループID: {keyword_group['group_id']}")
+        print(f"  キーワード: {', '.join(keyword_group['keywords'])}")
+        print(f"  メインカテゴリ: {keyword_group['main_category']}")
+        print(f"  サブカテゴリ: {keyword_group['sub_category']}")
+        
+        # 統合記事生成テスト
+        print("\n=== 統合記事生成テスト ===")
+        article = generate_integrated_article_from_keywords(keyword_group)
+        print(f"生成されたタイトル: {article['title']}")
+        print(f"記事の冒頭: {article['content'][:200]}...")
+        
+    except Exception as e:
+        print(f"エラー: {e}")
+        print("フォールバック: 従来システムを使用")
+        keyword = get_next_keyword(col=0)
+        prompt = f"{keyword}についての記事を書いてください。SEOを意識して、検索ユーザーのニーズに応える内容にしてください。"
+        print("★今回のプロンプト:", prompt)
+        article = generate_article_html(prompt)
+        print(f"生成されたタイトル: {article['title']}")
+        print(f"記事の冒頭: {article['content'][:200]}...")
 

@@ -9,6 +9,8 @@ from generate_article import (
     generate_image_prompt,
     generate_image_url,
     get_next_keyword,
+    get_next_keyword_group,
+    generate_integrated_article_from_keywords,
     generate_meta_description,
     generate_seo_tags,
     generate_seo_slug,
@@ -127,6 +129,85 @@ def insert_images_to_html(html: str, max_imgs: int = 6) -> tuple[str, list[int]]
 
     return str(soup), media_ids
 
+# WordPressカテゴリ作成・取得関数
+def get_or_create_categories(main_category: str, sub_category: str = "") -> list[int]:
+    """
+    メインカテゴリとサブカテゴリからWordPressカテゴリIDのリストを取得
+    階層構造（親子関係）で作成・管理
+    """
+    category_ids = []
+    
+    if not main_category:
+        return category_ids
+    
+    # メインカテゴリ（親カテゴリ）の処理
+    main_category_id = get_or_create_single_category(main_category)
+    if main_category_id:
+        category_ids.append(main_category_id)
+        print(f"メインカテゴリ設定: {main_category} (ID: {main_category_id})")
+    
+    # サブカテゴリ（子カテゴリ）の処理
+    if sub_category and main_category_id:
+        sub_category_id = get_or_create_single_category(sub_category, parent_id=main_category_id)
+        if sub_category_id:
+            category_ids.append(sub_category_id)
+            print(f"サブカテゴリ設定: {sub_category} (ID: {sub_category_id}, 親: {main_category})")
+    
+    return category_ids
+
+def get_or_create_single_category(category_name: str, parent_id: int = 0) -> int:
+    """
+    単一カテゴリを取得または作成
+    """
+    try:
+        # 既存カテゴリを検索
+        search_resp = requests.get(
+            f"{WP_URL}/wp-json/wp/v2/categories",
+            auth=(WP_USER, WP_APP_PASS),
+            params={
+                "search": category_name,
+                "parent": parent_id  # 親カテゴリ指定
+            }
+        )
+        
+        if search_resp.status_code == 200:
+            existing_categories = search_resp.json()
+            # 完全一致するカテゴリがあるかチェック
+            found_category = next(
+                (cat for cat in existing_categories 
+                 if cat["name"] == category_name and cat["parent"] == parent_id), 
+                None
+            )
+            
+            if found_category:
+                return found_category["id"]
+            else:
+                # カテゴリを新規作成
+                create_data = {
+                    "name": category_name,
+                    "parent": parent_id
+                }
+                create_resp = requests.post(
+                    f"{WP_URL}/wp-json/wp/v2/categories",
+                    auth=(WP_USER, WP_APP_PASS),
+                    json=create_data
+                )
+                if create_resp.status_code == 201:
+                    new_category = create_resp.json()
+                    parent_text = f" (親: {parent_id})" if parent_id > 0 else ""
+                    print(f"新規カテゴリ作成: {category_name}{parent_text} (ID: {new_category['id']})")
+                    return new_category["id"]
+                else:
+                    print(f"カテゴリ作成失敗: {category_name} - {create_resp.text}")
+                    return 0
+        else:
+            print(f"カテゴリ検索失敗: {category_name}")
+            return 0
+            
+    except Exception as e:
+        print(f"カテゴリ処理エラー: {category_name} - {e}")
+        return 0
+
 # WordPressタグ作成・取得関数
 def get_or_create_tags(tag_names: list[str]) -> list[int]:
     """
@@ -169,7 +250,7 @@ def get_or_create_tags(tag_names: list[str]) -> list[int]:
     return tag_ids
 
 # 5. 投稿関数
-def post_to_wp(title: str, content: str, meta_description: str, slug: str, tag_ids: list[int], featured_id: int | None) -> dict:
+def post_to_wp(title: str, content: str, meta_description: str, slug: str, tag_ids: list[int], category_ids: list[int], featured_id: int | None) -> dict:
     data = {
         "title": title,
         "content": content,
@@ -177,6 +258,7 @@ def post_to_wp(title: str, content: str, meta_description: str, slug: str, tag_i
         "status": "draft",
         "featured_media": featured_id or 0,
         "tags": tag_ids,
+        "categories": category_ids,  # カテゴリIDリスト
         "meta": {
             "meta_description": meta_description,  # 汎用カスタムフィールド
             "seo_description": meta_description    # SEO用カスタムフィールド
@@ -199,10 +281,52 @@ def main():
         print("=== デバッグ: main開始 ===")
         
         # 参考記事設定を確認
-        reference_mode = os.getenv('REFERENCE_MODE', 'keywords')  # keywords, url, file, multiple, style_with_keywords
+        reference_mode = os.getenv('REFERENCE_MODE', 'integrated_keywords')  # integrated_keywords, keywords, url, file, multiple, style_with_keywords
         print(f"参考記事モード: {reference_mode}")
         
-        if reference_mode == 'style_with_keywords':
+        if reference_mode == 'integrated_keywords':
+            # 🆕 新しいCSVファイルを使用した統合キーワードモード
+            print("🎯 統合キーワードモード: 新しいCSVファイルを使用")
+            
+            # キーワードグループを取得
+            keyword_group = get_next_keyword_group()
+            
+            print(f"📝 取得したキーワードグループ:")
+            print(f"   グループID: {keyword_group['group_id']}")
+            print(f"   キーワード: {', '.join(keyword_group['keywords'])}")
+            print(f"   メインカテゴリ: {keyword_group['main_category']}")
+            print(f"   サブカテゴリ: {keyword_group['sub_category']}")
+            
+            # スタイル特徴抽出の設定確認
+            reference_urls = os.getenv('REFERENCE_URLS', '').split(',') if os.getenv('REFERENCE_URLS') else []
+            reference_files = os.getenv('REFERENCE_FILES', '').split(',') if os.getenv('REFERENCE_FILES') else []
+            
+            # URLとファイルを統合
+            all_sources = []
+            if reference_urls and reference_urls != ['']:
+                all_sources.extend([url.strip() for url in reference_urls if url.strip()])
+            if reference_files and reference_files != ['']:
+                all_sources.extend([file.strip() for file in reference_files if file.strip() and os.path.exists(file.strip())])
+            
+            style_features = None
+            if all_sources:
+                print(f"🎨 スタイル参考ソース: {len(all_sources)}つ")
+                # スタイル特徴を抽出
+                style_features = extract_style_features_from_sources(all_sources)
+                if "error" not in style_features:
+                    print(f"✨ スタイル特徴抽出完了")
+                    print(f"📈 見出し絵文字率: {style_features.get('emoji_in_headings_ratio', 0)*100:.0f}%")
+                    print(f"📝 文体: {style_features.get('tone', 'polite')}")
+                else:
+                    print(f"⚠️ スタイル抽出エラー: {style_features['error']}")
+                    style_features = None
+            
+            # 統合記事生成
+            article = generate_integrated_article_from_keywords(keyword_group, style_features)
+            
+            prompt = f"{keyword_group['primary_keyword']}関連記事"  # SEO関連の生成用
+            
+        elif reference_mode == 'style_with_keywords':
             # 🆕 スタイル参考 + キーワードベース モード
             reference_urls = os.getenv('REFERENCE_URLS', '').split(',') if os.getenv('REFERENCE_URLS') else []
             reference_files = os.getenv('REFERENCE_FILES', '').split(',') if os.getenv('REFERENCE_FILES') else []
@@ -378,7 +502,7 @@ def main():
             print(f"📝 キーワード: {article.get('keyword')}")
             print(f"🎯 スタイル参考数: {len(article.get('style_features', {}).get('sources', []))}")
         elif article.get('style_guided'):
-            print(f"🎨 スタイルガイド付き記事生成完了！")
+            print(f"�� スタイルガイド付き記事生成完了！")
             print(f"📊 統合スタイル特徴数: {len(article.get('style_features', {}).get('sources', []))}")
         elif article.get('multiple_references'):
             print(f"🔗 複数参考記事使用: {article.get('source_count')}つのソースから統合")
@@ -416,7 +540,16 @@ def main():
         tag_ids = get_or_create_tags(seo_tags)
         print("WordPressタグID:", tag_ids)
 
-        # (a-4) SEOスラッグ生成
+        # (a-4) カテゴリ設定（統合キーワードモードの場合）
+        category_ids = []
+        if reference_mode == 'integrated_keywords' and 'main_category' in article:
+            category_ids = get_or_create_categories(
+                article.get('main_category', ''),
+                article.get('sub_category', '')
+            )
+            print("WordPressカテゴリID:", category_ids)
+
+        # (a-5) SEOスラッグ生成
         seo_slug = generate_seo_slug(prompt, article["title"])
         print("生成されたSEOスラッグ:", seo_slug)
 
@@ -429,7 +562,7 @@ def main():
             if article.get('multiple_references'):
                 print("📸 複数参考記事ベースの画像生成を実行中...")
             elif article.get('reference_used'):
-                print("�� 参考記事ベースの画像生成を実行中...")
+                print("📸 参考記事ベースの画像生成を実行中...")
             else:
                 print("📸 画像生成を実行中...")
             
@@ -442,7 +575,7 @@ def main():
             featured_id = None
 
         # (c) 投稿
-        res = post_to_wp(article["title"], article["content"], meta_desc, seo_slug, tag_ids, featured_id)
+        res = post_to_wp(article["title"], article["content"], meta_desc, seo_slug, tag_ids, category_ids, featured_id)
         
         # 投稿完了メッセージ
         if article.get('keyword_based') and article.get('style_guided'):
