@@ -255,7 +255,7 @@ def post_to_wp(title: str, content: str, meta_description: str, slug: str, tag_i
         "title": title,
         "content": content,
         "slug": slug,  # SEOスラッグ
-        "status": "draft",
+        "status": "publish",
         "featured_media": featured_id or 0,
         "tags": tag_ids,
         "categories": category_ids,  # カテゴリIDリスト
