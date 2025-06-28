@@ -2,6 +2,14 @@
 
 ChatGPTとDALL-E 3を使用したWordPress記事の完全自動生成・投稿システム
 
+## 🔗 GitHubリポジトリ
+
+**メインリポジトリ**: [https://github.com/HirokiMorimoto0713/wp-auto](https://github.com/HirokiMorimoto0713/wp-auto)
+
+## 🚀 プロジェクト概要
+
+このシステムは、AI技術を活用してWordPress記事を完全自動で生成・投稿するシステムです。キーワードベースの記事生成から、複数の参考記事を統合したスタイルガイド機能まで、多様な記事生成方法をサポートしています。
+
 ## 🆕 新機能：参考記事ベース記事生成
 
 参考記事（HTMLまたはマークダウン）を読み取り、その構造に沿った記事を生成できるようになりました！
@@ -87,7 +95,13 @@ ChatGPTとDALL-E 3を使用したWordPress記事の完全自動生成・投稿�
 
 ## セットアップ
 
-### 1. 環境設定
+### 1. リポジトリのクローン
+```bash
+git clone https://github.com/HirokiMorimoto0713/wp-auto.git
+cd wp-auto
+```
+
+### 2. 環境設定
 
 ```bash
 # 仮想環境作成
@@ -96,10 +110,10 @@ source .venv/bin/activate  # Linux/Mac
 # .venv\Scripts\activate   # Windows
 
 # 依存関係インストール
-pip install openai requests python-dotenv beautifulsoup4 Pillow pyyaml
+pip install -r requirements.txt
 ```
 
-### 2. 環境変数設定
+### 3. 環境変数設定
 
 `.env`ファイルを作成：
 
@@ -110,7 +124,7 @@ WP_USER=your_wp_username
 WP_APP_PASS=your_wp_app_password
 ```
 
-### 3. キーワードリスト準備
+### 4. キーワードリスト準備
 
 `keywords.csv`ファイルを作成：
 
@@ -121,7 +135,7 @@ AI 画像生成
 プログラミング 入門
 ```
 
-### 4. WordPress設定
+### 5. WordPress設定
 
 - REST API有効化
 - アプリケーションパスワード生成
