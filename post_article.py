@@ -28,6 +28,7 @@ load_dotenv()
 WP_URL      = os.getenv("WP_URL").rstrip("/")
 WP_USER     = os.getenv("WP_USER")
 WP_APP_PASS = os.getenv("WP_APP_PASS")
+WP_POST_STATUS = os.getenv("WP_POST_STATUS", "publish")
 
 # 3. 画像アップロード関数（改良版：リサイズ・エラーハンドリング付き）
 def upload_image_to_wp(image_url: str) -> tuple[int, str]:
@@ -255,7 +256,7 @@ def post_to_wp(title: str, content: str, meta_description: str, slug: str, tag_i
         "title": title,
         "content": content,
         "slug": slug,  # SEOスラッグ
-        "status": "publish",
+        "status": WP_POST_STATUS,
         "featured_media": featured_id or 0,
         "tags": tag_ids,
         "categories": category_ids,  # カテゴリIDリスト
